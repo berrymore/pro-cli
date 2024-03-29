@@ -3,14 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'yaml';
 
-import { createRuntime } from '../../lib/pro';
-import { defaultFileName, createConfig, lookupConfig } from '../../lib/pro/config';
+import { createRuntime, createConfig, CONFIG_FILE_NAME } from '../../lib/pro';
+import { lookupConfig } from '../../lib/pro/utils';
 import { createGit } from '../../lib/git';
-import { createTpl } from '../../lib/tpl';
+import { createTemplateRenderer } from '../../lib/template';
 import { createWorkflowEngine } from '../../lib/workflow';
 import { createDocker } from '../../lib/docker';
-
-const wwwDirectory = 'www';
 
 const initCommand: Command = new Command('init')
   .summary('init namespace')
@@ -30,7 +28,7 @@ const initCommand: Command = new Command('init')
 
     const dirs = [
       path.join(name, 'github.com'),
-      path.join(name, wwwDirectory),
+      path.join(name, 'www'),
       path.join(name, '.docker/images'),
       path.join(name, '.docker/etc'),
       path.join(name, '.docker/var'),
@@ -41,7 +39,7 @@ const initCommand: Command = new Command('init')
     }
 
     fs.writeFileSync(
-      path.join(name, defaultFileName),
+      path.join(name, CONFIG_FILE_NAME),
       JSON.stringify(createConfig(name), null, 2),
     );
 
@@ -60,11 +58,10 @@ const cloneCommand: Command = new Command('clone')
     runtime.assertNamespace();
 
     const link = `${owner}/${repository}`;
-    const { projects } = runtime.getConfig();
 
     git.clone(
       `git@github.com:${link}.git`,
-      link in projects ? `${wwwDirectory}/${projects[link]}` : `github.com/${link}`,
+      `github.com/${link}`,
       undefined,
       (err) => {
         if (err) {
@@ -81,7 +78,9 @@ const templateCommand: Command = new Command('template')
   .argument('<input>', 'input file (.tpl or .yaml)')
   .action(async (input: string) => {
     const extName = path.extname(input);
-    const tpl = createTpl();
+
+    const docker = createDocker();
+    const templateRenderer = createTemplateRenderer(docker);
     const runtime = createRuntime();
 
     if (!['.tpl', '.yaml'].includes(extName)) {
@@ -105,19 +104,19 @@ const templateCommand: Command = new Command('template')
         throw new Error('YAML file is invalid');
       }
 
-      const intents = await tpl.renderIntents(yamlData.templates, context);
+      const intents = await templateRenderer.renderTemplates(yamlData.templates, context);
 
       for (const intent of intents) {
         fs.mkdirSync(path.dirname(intent.destination), { recursive: true });
         fs.writeFileSync(intent.destination, intent.content ?? '');
       }
     } else {
-      fs.writeFileSync(input.replace('.tpl', ''), await tpl.render(input, context));
+      fs.writeFileSync(input.replace('.tpl', ''), await templateRenderer.render(input, context));
     }
   });
 
 interface WorkflowOptions {
-  jobs?: Array<string>;
+  jobs?: string[];
 }
 
 const workflowCommand: Command = new Command('workflow')
@@ -141,9 +140,7 @@ const workflowCommand: Command = new Command('workflow')
 const whichCommand: Command = new Command('which')
   .summary('show current config path')
   .action(() => {
-    const configPath = lookupConfig(process.cwd());
-
-    console.log(configPath || 'Config file not found');
+    console.log(lookupConfig(process.cwd(), CONFIG_FILE_NAME) || 'Config file not found');
   });
 
 export default {

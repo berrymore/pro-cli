@@ -1,44 +1,31 @@
 import chalk from 'chalk';
 
-import DockerWrapper from '../docker/DockerWrapper';
-import { RuntimeInterface } from '../pro';
+import { WrappedDocker } from '../docker/types';
+import { RuntimeInterface } from '../pro/types';
 
-type JobsDict = { [id: string]: WorkflowJob };
+import {
+  Workflow,
+  WorkflowEngine,
+  JobsDictionary,
+  ExecFunction,
+} from './types';
 
-interface Workflow {
-  kind: 'workflow';
-  name: string;
-  jobs: JobsDict;
-}
+import { toEnvName } from './utils';
+import { createExecFunction } from './exec';
 
-interface WorkflowJob {
-  image: string;
-  env?: Array<string>;
-  commands: Array<string>;
-}
+async function computeEnvVariables(docker: WrappedDocker, runtime: RuntimeInterface): Promise<string[]> {
+  const result: string[] = [];
+  const services = await docker.listComposeServices();
 
-interface WorkflowEngine {
-  run(workflow: Workflow, targetJobs?: Array<string>): void;
-}
-
-function anyCaseToEnvName(str: string): string {
-  // convert camelCase to kebab-case
-  // convert kebab-case to ENV_NAME
-  return str
-    .replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase()
-    .split('-').map((word) => word.toUpperCase())
-    .join('_');
-}
-
-async function computeEnvVariables(docker: DockerWrapper, runtime: RuntimeInterface): Promise<Array<string>> {
-  const result: Array<string> = [];
-  const services = await docker.listServices();
-
-  const pushVar = (key: string, value: any) => result.push(`PRO_${anyCaseToEnvName(key)}=${value}`);
+  const pushVar = (
+    key: string,
+    value: any,
+    prefix: string = 'PRO_',
+  ) => result.push(`${prefix}${toEnvName(key)}=${value}`);
 
   for (const service of services) {
-    if (service.defaultNetwork) {
-      pushVar(`${service.project}_${service.service}_IP_ADDR`, service.defaultNetwork?.IPAddress);
+    if (service.network) {
+      pushVar(`${service.project}_${service.service}_IP_ADDR`, service.network?.IPAddress);
     }
   }
 
@@ -50,65 +37,90 @@ async function computeEnvVariables(docker: DockerWrapper, runtime: RuntimeInterf
     pushVar('NS_NAME', runtime.config.name);
   }
 
+  Object.entries(process.env).forEach(([key, value]) => {
+    pushVar(key, value, '');
+  });
+
   return result;
 }
 
-export interface WorkflowEngineDeps {
-  docker: DockerWrapper;
+interface CreateWorkflowEngineOptions {
+  docker: WrappedDocker;
   runtime: RuntimeInterface;
 }
 
-export function createWorkflowEngine(deps: WorkflowEngineDeps): WorkflowEngine {
+export function createWorkflowDriver(docker: WrappedDocker, runtime: RuntimeInterface, image?: string): ExecFunction {
+  if (image) {
+    const { uid, gid } = runtime;
+
+    return async function exec(cmd: string[], outputStream: NodeJS.WritableStream, _, cwd, env: string[]) {
+      const result = await docker.driver.run(
+        image,
+        cmd,
+        outputStream,
+        {
+          HostConfig: {
+            AutoRemove: true,
+            Mounts: [
+              {
+                Target: '/project',
+                Source: cwd,
+                Type: 'bind',
+              },
+            ],
+            NetworkMode: runtime.config?.docker.network,
+          },
+          WorkingDir: '/project',
+          User: `${uid}:${gid}`,
+          Env: env,
+        },
+      );
+
+      return result[0]?.StatusCode;
+    };
+  }
+
+  return createExecFunction();
+}
+
+export function createWorkflowEngine(deps: CreateWorkflowEngineOptions): WorkflowEngine {
   const { docker, runtime } = deps;
-  const { uid, gid } = runtime;
-  const network = runtime.config?.docker.network;
 
   return {
-    async run(workflow: Workflow, targetJobs?: Array<string>) {
+    async run(workflow: Workflow, jobs?: string[]) {
       console.log(chalk.blue(`Running "${workflow.name}" workflow`));
 
-      const env = await computeEnvVariables(docker, runtime);
-      let queuedJobs: JobsDict = {};
+      let queuedJobs: JobsDictionary = workflow.jobs;
 
-      if (targetJobs) {
-        for (const targetJob of targetJobs) {
-          if (!(targetJob in workflow.jobs)) {
-            throw new Error(`Job "${targetJob}" is undefined in workflow "${workflow.name}"`);
+      if (jobs) {
+        queuedJobs = {};
+
+        for (const job of jobs) {
+          if (!(job in workflow.jobs)) {
+            throw new Error(`Job "${job}" is undefined in workflow "${workflow.name}"`);
           }
 
-          queuedJobs[targetJob] = workflow.jobs[targetJob];
+          queuedJobs[job] = workflow.jobs[job];
         }
-      } else {
-        queuedJobs = workflow.jobs;
       }
+
+      const envVariables = await computeEnvVariables(docker, runtime);
 
       for (const [jobId, job] of Object.entries(queuedJobs)) {
         console.log(chalk.yellow(`Job "${jobId}"`));
 
-        const jobEnv: Array<string> = job.env ?? [];
+        const jobEnvVariables = job.env ?? [];
 
         for (const command of job.commands) {
+          const exec = createWorkflowDriver(docker, runtime, job.image);
+
           // eslint-disable-next-line no-await-in-loop
-          await docker.driver.run(
-            job.image,
+          await exec(
             ['sh', '-c', command],
             process.stdout,
-            {
-              HostConfig: {
-                AutoRemove: true,
-                Mounts: [
-                  {
-                    Target: '/project',
-                    Source: process.cwd(),
-                    Type: 'bind',
-                  },
-                ],
-                NetworkMode: network,
-              },
-              WorkingDir: '/project',
-              User: `${uid}:${gid}`,
-              Env: [...env, ...jobEnv],
-            },
+            process.stderr,
+            process.cwd(),
+            [...envVariables, ...jobEnvVariables],
           );
         }
       }

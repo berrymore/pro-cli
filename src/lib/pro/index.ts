@@ -2,24 +2,25 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { ConfigInterface, lookupConfig } from './config';
+import { ConfigInterface, RuntimeInterface } from './types';
+import { lookupConfig } from './utils';
 
-export interface RuntimeInterface {
-  cwd: string;
-  configPath?: string;
-  config?: ConfigInterface;
-  nsRoot?: string;
-  uid: number;
-  gid: number;
+export const CONFIG_FILE_NAME = '.pro.json';
 
-  assertNamespace(): void;
-
-  getConfig(): ConfigInterface;
+export function createConfig(name: string): ConfigInterface {
+  return {
+    name,
+    docker: {
+      network: name,
+    },
+  };
 }
 
 export function createRuntime(): RuntimeInterface {
-  const cwd: string = process.cwd();
-  const configPath: string | undefined = lookupConfig(cwd);
+  const cwd = process.cwd();
+  const { uid, gid } = os.userInfo();
+  const configPath = lookupConfig(cwd, CONFIG_FILE_NAME);
+
   let config: ConfigInterface | undefined;
 
   if (configPath) {
@@ -28,22 +29,14 @@ export function createRuntime(): RuntimeInterface {
 
   return {
     cwd,
-    configPath,
+    uid,
+    gid,
     config,
     nsRoot: configPath ? path.dirname(configPath) : undefined,
-    uid: os.userInfo().uid,
-    gid: os.userInfo().gid,
     assertNamespace() {
       if (!this.config) {
         throw new Error('You are not in a namespace');
       }
-    },
-    getConfig(): ConfigInterface {
-      if (!this.config) {
-        throw new Error('Cannot read a config file');
-      }
-
-      return this.config;
     },
   };
 }
