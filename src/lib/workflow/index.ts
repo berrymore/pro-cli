@@ -6,11 +6,10 @@ import { RuntimeInterface } from '../pro/types';
 import {
   Workflow,
   WorkflowEngine,
-  JobsDictionary,
   Executor,
 } from './types';
 
-import { toEnvName } from './utils';
+import { toEnvName, filterScheduledJobs } from './utils';
 import { createStdExecutor, createDockerExecutor } from './executor';
 
 async function computeEnvVariables(docker: WrappedDocker, runtime: RuntimeInterface): Promise<string[]> {
@@ -56,26 +55,14 @@ export function createWorkflowEngine(options: CreateWorkflowEngineOptions): Work
     async run(workflow: Workflow, jobs?: string[]) {
       console.log(chalk.blue(`Running "${workflow.name}" workflow`));
 
-      let queuedJobs: JobsDictionary = workflow.jobs;
+      const scheduledJobs = filterScheduledJobs(workflow.jobs, jobs);
+      const globalEnv = await computeEnvVariables(docker, runtime);
 
-      if (jobs) {
-        queuedJobs = {};
-
-        for (const job of jobs) {
-          if (!(job in workflow.jobs)) {
-            throw new Error(`Job "${job}" is undefined in workflow "${workflow.name}"`);
-          }
-
-          queuedJobs[job] = workflow.jobs[job];
-        }
-      }
-
-      const envVariables = await computeEnvVariables(docker, runtime);
-
-      for (const [jobId, job] of Object.entries(queuedJobs)) {
+      for (const [jobId, job] of Object.entries(scheduledJobs)) {
         console.log(chalk.yellow(`Job "${jobId}"`));
 
-        const jobEnvVariables = job.env ?? [];
+        const jobEnv = job.env ?? [];
+        const shell = job.shell ?? 'sh';
 
         const executor: Executor = job.image
           ? createDockerExecutor(docker, job.image, runtime.config?.docker.network)
@@ -83,19 +70,24 @@ export function createWorkflowEngine(options: CreateWorkflowEngineOptions): Work
 
         for (const command of job.commands) {
           // eslint-disable-next-line no-await-in-loop
-          await executor.exec(
-            ['sh', '-c', command],
+          const statusCode = await executor.exec(
+            [shell, '-c', command],
             {
               stdout: process.stdout,
               stderr: process.stderr,
             },
             {
               cwd: process.cwd(),
-              env: [...envVariables, ...jobEnvVariables],
+              env: [...globalEnv, ...jobEnv],
               gid: runtime.gid,
               uid: runtime.uid,
             },
           );
+
+          if (statusCode !== 0) {
+            console.error(chalk.red(`Command of "${jobId}" job finished with exit code ${statusCode}`));
+            process.exit(statusCode);
+          }
         }
       }
     },

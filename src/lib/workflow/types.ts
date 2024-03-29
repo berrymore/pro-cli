@@ -13,6 +13,7 @@ interface Entity {
 interface WorkflowJob {
   image?: string;
   env?: string[];
+  shell?: string;
   commands: string[];
 }
 
@@ -36,5 +37,5 @@ export interface Executor {
 // Engine
 
 export interface WorkflowEngine {
-  run(workflow: Workflow, jobs?: string[]): void;
+  run(workflow: Workflow, jobs?: string[]): Promise<void>;
 }
