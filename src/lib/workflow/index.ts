@@ -7,11 +7,11 @@ import {
   Workflow,
   WorkflowEngine,
   JobsDictionary,
-  ExecFunction,
+  Executor,
 } from './types';
 
 import { toEnvName } from './utils';
-import { createExecFunction } from './exec';
+import { createStdExecutor, createDockerExecutor } from './executor';
 
 async function computeEnvVariables(docker: WrappedDocker, runtime: RuntimeInterface): Promise<string[]> {
   const result: string[] = [];
@@ -44,47 +44,13 @@ async function computeEnvVariables(docker: WrappedDocker, runtime: RuntimeInterf
   return result;
 }
 
-interface CreateWorkflowEngineOptions {
+type CreateWorkflowEngineOptions = {
   docker: WrappedDocker;
   runtime: RuntimeInterface;
-}
+};
 
-export function createWorkflowDriver(docker: WrappedDocker, runtime: RuntimeInterface, image?: string): ExecFunction {
-  if (image) {
-    const { uid, gid } = runtime;
-
-    return async function exec(cmd: string[], outputStream: NodeJS.WritableStream, _, cwd, env: string[]) {
-      const result = await docker.driver.run(
-        image,
-        cmd,
-        outputStream,
-        {
-          HostConfig: {
-            AutoRemove: true,
-            Mounts: [
-              {
-                Target: '/project',
-                Source: cwd,
-                Type: 'bind',
-              },
-            ],
-            NetworkMode: runtime.config?.docker.network,
-          },
-          WorkingDir: '/project',
-          User: `${uid}:${gid}`,
-          Env: env,
-        },
-      );
-
-      return result[0]?.StatusCode;
-    };
-  }
-
-  return createExecFunction();
-}
-
-export function createWorkflowEngine(deps: CreateWorkflowEngineOptions): WorkflowEngine {
-  const { docker, runtime } = deps;
+export function createWorkflowEngine(options: CreateWorkflowEngineOptions): WorkflowEngine {
+  const { docker, runtime } = options;
 
   return {
     async run(workflow: Workflow, jobs?: string[]) {
@@ -111,16 +77,24 @@ export function createWorkflowEngine(deps: CreateWorkflowEngineOptions): Workflo
 
         const jobEnvVariables = job.env ?? [];
 
-        for (const command of job.commands) {
-          const exec = createWorkflowDriver(docker, runtime, job.image);
+        const executor: Executor = job.image
+          ? createDockerExecutor(docker, job.image, runtime.config?.docker.network)
+          : createStdExecutor();
 
+        for (const command of job.commands) {
           // eslint-disable-next-line no-await-in-loop
-          await exec(
+          await executor.exec(
             ['sh', '-c', command],
-            process.stdout,
-            process.stderr,
-            process.cwd(),
-            [...envVariables, ...jobEnvVariables],
+            {
+              stdout: process.stdout,
+              stderr: process.stderr,
+            },
+            {
+              cwd: process.cwd(),
+              env: [...envVariables, ...jobEnvVariables],
+              gid: runtime.gid,
+              uid: runtime.uid,
+            },
           );
         }
       }

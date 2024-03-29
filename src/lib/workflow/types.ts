@@ -1,3 +1,5 @@
+import { WriteStream } from 'node:tty';
+
 export enum EntityType {
   workflow = 'workflow',
 }
@@ -22,15 +24,14 @@ export interface Workflow extends Entity {
   jobs: JobsDictionary;
 }
 
-// ExecFunction
+// Executor
 
-export type ExecFunction = (
-  cmd: string[],
-  outputStream: NodeJS.WritableStream,
-  errorStream: NodeJS.WritableStream,
-  cwd: string,
-  env: string[]
-) => Promise<number>;
+export type Stream = { stdout: WriteStream, stderr: WriteStream };
+export type ExecOptions = { cwd: string, env: string[], uid: number, gid: number };
+
+export interface Executor {
+  exec(cmd: string[], stream: Stream, options: ExecOptions): Promise<number>;
+}
 
 // Engine
 
