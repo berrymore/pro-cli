@@ -45,9 +45,9 @@ export function createStdExecutor(): Executor {
         } = options;
 
         env.forEach((e) => {
-          const [key, value] = e.split('=');
+          const [k, value] = e.split('=');
 
-          envObj[key] = value;
+          envObj[k] = value;
         });
 
         const child = spawn(

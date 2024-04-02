@@ -38,9 +38,17 @@ async function computeEnvVariables(docker: WrappedDocker, runtime: RuntimeInterf
     pushVar('NS_NAME', runtime.config.name);
   }
 
-  Object.entries(process.env).forEach(([key, value]) => {
-    pushVar(key, value, '');
-  });
+  return result;
+}
+
+function getHostEnv(env: string[]): string[] {
+  const result: string[] = [];
+
+  for (const key of env) {
+    if (key in process.env) {
+      result.push(`${key}=${process.env[key]}`);
+    }
+  }
 
   return result;
 }
@@ -56,15 +64,17 @@ export function createWorkflowEngine(options: CreateWorkflowEngineOptions): Work
   return {
     async run(workflow: Workflow, jobs?: string[]) {
       const scheduledJobs = filterScheduledJobs(workflow.jobs, jobs);
-      const globalEnv = await computeEnvVariables(docker, runtime);
+      const computedEnv = await computeEnvVariables(docker, runtime);
 
       for (const [jobId, job] of Object.entries(scheduledJobs)) {
+        console.log(chalk.yellow(`Running "${jobId} job"`));
+
         const jobEnv = job.env ?? [];
         const shell = job.shell ?? 'sh';
         const maxParallel = job.maxParallel ?? 1;
-        const execEnv = [...globalEnv, ...jobEnv];
+        const hostEnv = job.hostEnv ?? [];
 
-        console.log(chalk.yellow(`Running "${jobId} job"`));
+        const execEnv = [...computedEnv, ...getHostEnv(hostEnv), ...jobEnv];
 
         const executor: Executor = job.image
           ? createDockerExecutor(docker, job.image, runtime.config?.docker.network)
@@ -72,6 +82,7 @@ export function createWorkflowEngine(options: CreateWorkflowEngineOptions): Work
 
         const queue: Task<number>[] = [];
 
+        // eslint-disable-next-line guard-for-in
         for (const cmdId in job.commands) {
           queue.push(() => executor.exec(
             `${jobId}[${cmdId}]`,

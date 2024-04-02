@@ -15,6 +15,7 @@ interface WorkflowJob {
   env?: string[];
   shell?: string;
   maxParallel?: number;
+  hostEnv?: string[];
   commands: string[];
 }
 
