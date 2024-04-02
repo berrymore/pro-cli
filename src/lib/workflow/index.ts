@@ -7,10 +7,12 @@ import {
   Workflow,
   WorkflowEngine,
   Executor,
+  Task,
 } from './types';
 
 import { toEnvName, filterScheduledJobs } from './utils';
 import { createStdExecutor, createDockerExecutor } from './executor';
+import { schedule } from './scheduler';
 
 async function computeEnvVariables(docker: WrappedDocker, runtime: RuntimeInterface): Promise<string[]> {
   const result: string[] = [];
@@ -53,40 +55,51 @@ export function createWorkflowEngine(options: CreateWorkflowEngineOptions): Work
 
   return {
     async run(workflow: Workflow, jobs?: string[]) {
-      console.log(chalk.blue(`Running "${workflow.name}" workflow`));
-
       const scheduledJobs = filterScheduledJobs(workflow.jobs, jobs);
       const globalEnv = await computeEnvVariables(docker, runtime);
 
       for (const [jobId, job] of Object.entries(scheduledJobs)) {
-        console.log(chalk.yellow(`Job "${jobId}"`));
-
         const jobEnv = job.env ?? [];
         const shell = job.shell ?? 'sh';
+        const maxParallel = job.maxParallel ?? 1;
+        const execEnv = [...globalEnv, ...jobEnv];
+
+        console.log(chalk.yellow(`Running "${jobId} job"`));
 
         const executor: Executor = job.image
           ? createDockerExecutor(docker, job.image, runtime.config?.docker.network)
           : createStdExecutor();
 
-        for (const command of job.commands) {
-          // eslint-disable-next-line no-await-in-loop
-          const statusCode = await executor.exec(
-            [shell, '-c', command],
+        const queue: Task<number>[] = [];
+
+        for (const cmdId in job.commands) {
+          queue.push(() => executor.exec(
+            `${jobId}[${cmdId}]`,
+            [shell, '-c', job.commands[cmdId]],
             {
               stdout: process.stdout,
               stderr: process.stderr,
             },
             {
               cwd: process.cwd(),
-              env: [...globalEnv, ...jobEnv],
+              env: execEnv,
               gid: runtime.gid,
               uid: runtime.uid,
             },
-          );
+          ));
+        }
 
-          if (statusCode !== 0) {
-            console.error(chalk.red(`Command of "${jobId}" job finished with exit code ${statusCode}`));
-            process.exit(statusCode);
+        // eslint-disable-next-line no-await-in-loop
+        const results = await schedule<number>(queue, maxParallel);
+
+        for (const result of results) {
+          if (result.error) {
+            throw result.error;
+          }
+
+          if (result.result !== 0) {
+            console.error(chalk.red(`Command of "${jobId}" job finished with exit code ${result.result}`));
+            process.exit(result.result);
           }
         }
       }

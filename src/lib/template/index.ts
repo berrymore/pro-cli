@@ -22,7 +22,7 @@ export function createTemplateRenderer(docker: WrappedDocker): TemplateRenderer 
     renderString(content: string, context?: object): Promise<string> {
       return new Promise<string>((resolve, reject) => {
         engine.renderString(content, context ?? {}, (err, result) => {
-          if (result) {
+          if (result !== null) {
             resolve(result);
           } else {
             reject(err || new Error('Template engine has returned nothing'));
@@ -33,20 +33,22 @@ export function createTemplateRenderer(docker: WrappedDocker): TemplateRenderer 
     renderTemplates(templates: Template[], context?: object): Promise<Template[]> {
       const queue: Promise<Template>[] = [];
 
-      const createPromise = async (destination: string, content: Promise<string>): Promise<Template> => ({
-        destination,
+      const createPromise = async (destination: Promise<string>, content: Promise<string>): Promise<Template> => ({
+        destination: await destination,
         content: await content,
       });
 
       for (const template of templates) {
+        const destination = this.renderString(template.destination, context);
+
         if (template.source) {
           if (!fs.existsSync(template.source)) {
             throw new Error(`File ${template.source} does not exist`);
           }
 
-          queue.push(createPromise(template.destination, this.render(template.source, context)));
+          queue.push(createPromise(destination, this.render(template.source, context)));
         } else {
-          queue.push(createPromise(template.destination, this.renderString(template.content ?? '', context)));
+          queue.push(createPromise(destination, this.renderString(template.content ?? '', context)));
         }
       }
 

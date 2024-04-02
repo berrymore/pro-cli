@@ -49,19 +49,26 @@ const initCommand: Command = new Command('init')
 const cloneCommand: Command = new Command('clone')
   .summary('clone repository')
   .description('Clone repository from GitHub')
-  .argument('<repository>', 'repository to clone')
-  .argument('<owner>', 'owner of the repository')
-  .action((repository, owner) => {
+  .argument('<name>', 'repository to clone (owner/repository)')
+  .argument('[dir]', 'directory to clone into')
+  .action((name: string, dir?: string) => {
     const runtime = createRuntime();
     const git = createGit();
 
     runtime.assertNamespace();
 
+    const repo = name.split('/');
+
+    if (repo.length !== 2) {
+      throw new Error(`Repository name format should be "owner/repository". Given: "${name}"`);
+    }
+
+    const [owner, repository] = repo;
     const link = `${owner}/${repository}`;
 
     git.clone(
       `git@github.com:${link}.git`,
-      `github.com/${link}`,
+      dir ?? `github.com/${link}`,
       undefined,
       (err) => {
         if (err) {
@@ -104,11 +111,11 @@ const templateCommand: Command = new Command('template')
         throw new Error('YAML file is invalid');
       }
 
-      const intents = await templateRenderer.renderTemplates(yamlData.templates, context);
+      const templates = await templateRenderer.renderTemplates(yamlData.templates, context);
 
-      for (const intent of intents) {
-        fs.mkdirSync(path.dirname(intent.destination), { recursive: true });
-        fs.writeFileSync(intent.destination, intent.content ?? '');
+      for (const template of templates) {
+        fs.mkdirSync(path.dirname(template.destination), { recursive: true });
+        fs.writeFileSync(template.destination, template.content ?? '');
       }
     } else {
       fs.writeFileSync(input.replace('.tpl', ''), await templateRenderer.render(input, context));

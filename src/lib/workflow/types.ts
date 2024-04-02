@@ -14,6 +14,7 @@ interface WorkflowJob {
   image?: string;
   env?: string[];
   shell?: string;
+  maxParallel?: number;
   commands: string[];
 }
 
@@ -27,11 +28,22 @@ export interface Workflow extends Entity {
 
 // Executor
 
+export type StatusCode = number;
+
 export type Stream = { stdout: WriteStream, stderr: WriteStream };
 export type ExecOptions = { cwd: string, env: string[], uid: number, gid: number };
 
 export interface Executor {
-  exec(cmd: string[], stream: Stream, options: ExecOptions): Promise<number>;
+  exec(key: string, cmd: string[], stream: Stream, options: ExecOptions): Promise<StatusCode>;
+}
+
+// Scheduler
+
+export type Task<T> = () => Promise<T>;
+
+export interface TaskResult<T> {
+  result?: T;
+  error?: Error;
 }
 
 // Engine

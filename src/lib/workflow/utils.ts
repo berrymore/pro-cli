@@ -26,3 +26,9 @@ export function filterScheduledJobs(jobs: JobsDictionary, scheduled?: string[]):
 
   return result;
 }
+
+export function formatDate(date: Date): string {
+  const pad = (num: number) => (num < 10 ? '0' + num : num)
+
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
