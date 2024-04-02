@@ -67,7 +67,7 @@ export function createWorkflowEngine(options: CreateWorkflowEngineOptions): Work
       const computedEnv = await computeEnvVariables(docker, runtime);
 
       for (const [jobId, job] of Object.entries(scheduledJobs)) {
-        console.log(chalk.yellow(`Running "${jobId} job"`));
+        console.log(chalk.yellow(`Running "${jobId}" job`));
 
         const jobEnv = job.env ?? [];
         const shell = job.shell ?? 'sh';
