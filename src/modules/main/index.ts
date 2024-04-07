@@ -52,11 +52,7 @@ const cloneCommand: Command = new Command('clone')
   .argument('<name>', 'repository to clone (owner/repository)')
   .argument('[dir]', 'directory to clone into')
   .action((name: string, dir?: string) => {
-    const runtime = createRuntime();
     const git = createGit();
-
-    runtime.assertNamespace();
-
     const repo = name.split('/');
 
     if (repo.length !== 2) {
