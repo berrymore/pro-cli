@@ -76,10 +76,15 @@ const cloneCommand: Command = new Command('clone')
     );
   });
 
+type TemplateOptions = {
+  output?: string
+}
+
 const templateCommand: Command = new Command('template')
   .summary('handle template file')
   .argument('<input>', 'input file (.tpl or .yaml)')
-  .action(async (input: string) => {
+  .option('-o, --output <path>', 'output filepath (for .tpl only)')
+  .action(async (input: string, options: TemplateOptions) => {
     const extName = path.extname(input);
 
     const docker = createDocker();
@@ -96,6 +101,7 @@ const templateCommand: Command = new Command('template')
 
     const context = {
       runtime,
+      env: process.env,
     };
 
     if (extName === '.yaml') {
@@ -114,7 +120,18 @@ const templateCommand: Command = new Command('template')
         fs.writeFileSync(template.destination, template.content ?? '');
       }
     } else {
-      fs.writeFileSync(input.replace('.tpl', ''), await templateRenderer.render(input, context));
+      let outputPath = path.join(runtime.cwd, path.basename(input, '.tpl'));
+
+      if (options.output) {
+        outputPath = path.isAbsolute(options.output)
+          ? options.output
+          : path.join(runtime.cwd, options.output)
+      }
+
+      fs.writeFileSync(
+        outputPath,
+        await templateRenderer.render(input, context)
+      );
     }
   });
 

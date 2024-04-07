@@ -16,7 +16,7 @@ function setupFilters(engine: Environment, docker: WrappedDocker): void {
     }
   }, true);
 
-  engine.addFilter('joinPath', (base: string, addition: string) => path.join(base, addition));
+  engine.addFilter('joinPath', (base: string, ...addition: string[]) => path.join(base, ...addition));
 }
 
 export function createEngine(docker: WrappedDocker): Environment {
